@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>W jednym miejscu</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+
+<!-- FIREBASE INIT (module scope, exposes window.fb API used by the app script below) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js";
+  import {
+    getAuth, onAuthStateChanged, signInWithEmailAndPassword,
+    createUserWithEmailAndPassword, signOut
+  } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-auth.js";
+  import {
+    getFirestore, doc, setDoc, deleteDoc, collection, onSnapshot
+  } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-firestore.js";
+  import {
+    getStorage, ref, uploadBytes, getDownloadURL, deleteObject
+  } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-storage.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyD554ryUfUHKvzxCmDxzjbv3tCaP3JioUA",
+    authDomain: "w-jednym-miejscu.firebaseapp.com",
+    projectId: "w-jednym-miejscu",
+    storageBucket: "w-jednym-miejscu.firebasestorage.app",
+    messagingSenderId: "191869454229",
+    appId: "1:191869454229:web:92a99e0f85344fcf04d89c"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  const storage = getStorage(app);
+
+  window.fb = {
+    onAuthChange: (cb) => onAuthStateChanged(auth, cb),
+    login: (email, password) => signInWithEmailAndPassword(auth, email, password),
+    register: (email, password) => createUserWithEmailAndPassword(auth, email, password),
+    logout: () => signOut(auth),
+
+    subscribeSettings: (uid, cb) => onSnapshot(doc(db, 'users', uid), (snap) => {
+      cb(snap.exists() ? (snap.data().settings || null) : null);
+    }),
+    saveSettings: (uid, settings) => setDoc(doc(db, 'users', uid), { settings }, { merge: true }),
+
+    subscribeEntries: (uid, cb) => onSnapshot(collection(db, 'users', uid, 'entries'), (snap) => {
+      cb(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }),
+    newEntryId: (uid) => doc(collection(db, 'users', uid, 'entries')).id,
+    saveEntry: (uid, id, data) => setDoc(doc(db, 'users', uid, 'entries', id), data),
+    deleteEntry: (uid, id) => deleteDoc(doc(db, 'users', uid, 'entries', id)),
+
+    uploadFile: async (uid, entryId, file) => {
+      const path = `users/${uid}/entries/${entryId}/${Date.now()}_${file.name}`;
+      const sref = ref(storage, path);
+      await uploadBytes(sref, file);
+      const url = await getDownloadURL(sref);
+      return { url, path };
+    },
+    deleteFile: (path) => deleteObject(ref(storage, path)).catch(() => {})
+  };
+
+  window.dispatchEvent(new Event('fb-ready'));
+</script>
+
+<style>
+  :root {
+    --bg: #0f0f0f; --surface: #1a1a1a; --surface2: #222222; --border: #2e2e2e;
+    --accent: #c9a84c; --accent-dim: rgba(201,168,76,0.15); --accent-dim2: rgba(201,168,76,0.08);
+    --text: #f0ede8; --text-muted: #888; --text-dim: #555;
+    --red: #e05555; --orange: #e09955; --green: #6abf7b;
+    --radius: 12px; --radius-sm: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; font-weight: 400; min-height: 100vh; font-size: 15px; }
+  .app { display: flex; flex-direction: column; min-height: 100vh; max-width: 480px; margin: 0 auto; }
+
+  header { padding: 52px 24px 20px; border-bottom: 1px solid var(--border); background: var(--bg); position: sticky; top: 0; z-index: 100; }
+  .header-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+  .logo { font-family: 'Playfair Display', serif; font-size: 22px; color: var(--accent); letter-spacing: 0.02em; display: flex; flex-direction: column; line-height: 1.2; }
+  .logo span { color: var(--text-muted); font-size: 12px; font-family: 'DM Sans', sans-serif; font-weight: 300; margin-top: 2px; white-space: nowrap; }
+  .header-btns { display: flex; gap: 8px; align-items: center; }
+  .btn-icon { background: var(--surface2); border: 1px solid var(--border); color: var(--text-muted); width: 34px; height: 34px; border-radius: 50%; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color 0.15s; }
+  .btn-icon:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-add { background: var(--accent); color: #0f0f0f; border: none; width: 36px; height: 36px; border-radius: 50%; font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: 300; transition: transform 0.15s; flex-shrink: 0; }
+  .btn-add:hover { transform: scale(1.08); }
+
+  .filters { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+  .filters::-webkit-scrollbar { display: none; }
+  .filter-btn { background: none; border: 1px solid var(--border); color: var(--text-muted); padding: 5px 14px; border-radius: 20px; font-size: 13px; cursor: pointer; white-space: nowrap; font-family: 'DM Sans', sans-serif; transition: all 0.15s; flex-shrink: 0; }
+  .filter-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim2); }
+
+  main { flex: 1; padding: 20px 16px; }
+  .section-label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-dim); margin: 20px 0 10px 4px; font-weight: 500; }
+  .section-label:first-child { margin-top: 0; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 10px; cursor: pointer; transition: border-color 0.15s, background 0.15s; position: relative; overflow: hidden; }
+  .card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; border-radius: 3px 0 0 3px; }
+  .card.urgent::before { background: var(--red); }
+  .card.soon::before { background: var(--orange); }
+  .card.ok::before { background: var(--green); }
+  .card:hover { border-color: #3e3e3e; background: var(--surface2); }
+  .card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .card-title { font-family: 'Playfair Display', serif; font-size: 16px; font-weight: 400; color: var(--text); line-height: 1.3; }
+  .badge { font-size: 11px; font-weight: 500; padding: 3px 9px; border-radius: 20px; white-space: nowrap; flex-shrink: 0; }
+  .badge.urgent { background: rgba(224,85,85,0.18); color: var(--red); }
+  .badge.soon { background: rgba(224,153,85,0.18); color: var(--orange); }
+  .badge.ok { background: rgba(106,191,123,0.18); color: var(--green); }
+  .card-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .card-date { font-size: 13px; color: var(--text-muted); }
+  .card-cat { font-size: 11px; color: var(--text-dim); background: var(--surface2); border: 1px solid var(--border); padding: 2px 8px; border-radius: 10px; }
+  .card-recur { font-size: 11px; color: var(--accent); background: rgba(201,168,76,0.1); border: 1px solid rgba(201,168,76,0.2); padding: 2px 8px; border-radius: 10px; }
+  .card-icons { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+  .icon-dot { font-size: 14px; opacity: 0.5; }
+
+  .empty { text-align: center; padding: 60px 20px; color: var(--text-dim); }
+  .empty-icon { font-size: 36px; margin-bottom: 12px; opacity: 0.4; }
+  .empty-text { font-size: 14px; line-height: 1.6; }
+
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200; backdrop-filter: blur(4px); align-items: flex-end; justify-content: center; }
+  .overlay.open { display: flex; animation: fadeIn 0.2s; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes slideUp { from { transform: translateY(40px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  .sheet { background: var(--surface); border-radius: 20px 20px 0 0; width: 100%; max-width: 480px; padding: 24px 20px 40px; max-height: 90vh; overflow-y: auto; animation: slideUp 0.25s cubic-bezier(0.25,0.46,0.45,0.94); }
+  .sheet-handle { width: 36px; height: 4px; background: var(--border); border-radius: 2px; margin: 0 auto 20px; }
+  .sheet h2 { font-family: 'Playfair Display', serif; font-size: 20px; font-weight: 400; margin-bottom: 20px; color: var(--text); }
+
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; font-weight: 500; }
+  .field input, .field select, .field textarea { width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 15px; padding: 11px 13px; outline: none; transition: border-color 0.15s; -webkit-appearance: none; }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); }
+  .field textarea { resize: vertical; min-height: 80px; }
+  .field select option { background: #222; }
+
+  .cat-row { display: flex; gap: 8px; }
+  .cat-row select { flex: 1; }
+  .btn-cat-manage { background: var(--surface2); border: 1px solid var(--border); color: var(--accent); border-radius: var(--radius-sm); padding: 0 14px; font-size: 13px; cursor: pointer; transition: border-color 0.15s; flex-shrink: 0; white-space: nowrap; font-family: 'DM Sans', sans-serif; }
+  .btn-cat-manage:hover { border-color: var(--accent); }
+
+  .recur-grid { display: flex; gap: 8px; }
+  .recur-grid select { flex: 1; }
+  .recur-end-block { margin-top: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; display: none; }
+  .recur-end-block.visible { display: block; }
+  .recur-end-block .toggle-row { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+  .recur-end-block .toggle-row input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+  .recur-end-block .toggle-row span { font-size: 13px; color: var(--text-muted); }
+  .recur-count-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-left: 4px; }
+  .recur-count-row input[type=number] { width: 64px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 15px; padding: 8px 10px; outline: none; text-align: center; -webkit-appearance: none; transition: border-color 0.15s; }
+  .recur-count-row input[type=number]:focus { border-color: var(--accent); }
+  .recur-count-row span { font-size: 13px; color: var(--text-dim); }
+
+  .upload-area { border: 1.5px dashed var(--border); border-radius: var(--radius-sm); padding: 16px; text-align: center; cursor: pointer; transition: border-color 0.15s, background 0.15s; background: var(--surface2); }
+  .upload-area:hover { border-color: var(--accent); background: var(--accent-dim2); }
+  .upload-area p { font-size: 13px; color: var(--text-muted); }
+  .upload-area .upload-icon { font-size: 22px; margin-bottom: 6px; opacity: 0.5; }
+  #fileInput { display: none; }
+  .file-list { margin-top: 8px; }
+  .file-item { display: flex; align-items: center; justify-content: space-between; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-top: 6px; font-size: 13px; }
+  .file-item span { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80%; }
+  .file-remove { color: var(--text-dim); cursor: pointer; font-size: 16px; }
+  .file-remove:hover { color: var(--red); }
+
+  .btn-row { display: flex; gap: 10px; margin-top: 20px; }
+  .btn-primary { flex: 1; background: var(--accent); color: #0f0f0f; border: none; border-radius: var(--radius-sm); padding: 13px; font-size: 15px; font-family: 'DM Sans', sans-serif; font-weight: 500; cursor: pointer; transition: opacity 0.15s; }
+  .btn-primary:hover { opacity: 0.88; }
+  .btn-primary:disabled { opacity: 0.5; cursor: default; }
+  .btn-secondary { background: none; border: 1px solid var(--border); color: var(--text-muted); border-radius: var(--radius-sm); padding: 13px 18px; font-size: 15px; font-family: 'DM Sans', sans-serif; cursor: pointer; transition: border-color 0.15s; }
+  .btn-secondary:hover { border-color: var(--text-muted); }
+  .btn-delete { width: 100%; background: none; border: 1px solid rgba(224,85,85,0.3); color: var(--red); border-radius: var(--radius-sm); padding: 12px; font-size: 14px; font-family: 'DM Sans', sans-serif; cursor: pointer; margin-top: 8px; transition: background 0.15s; }
+  .btn-delete:hover { background: rgba(224,85,85,0.08); }
+  .btn-remind { width: 100%; background: none; border: 1px solid rgba(201,168,76,0.3); color: var(--accent); border-radius: var(--radius-sm); padding: 11px; font-size: 14px; font-family: 'DM Sans', sans-serif; cursor: pointer; margin-top: 6px; transition: background 0.15s; }
+  .btn-remind:hover { background: var(--accent-dim2); }
+  .btn-renew { width: 100%; background: none; border: 1px solid rgba(106,191,123,0.3); color: var(--green); border-radius: var(--radius-sm); padding: 11px; font-size: 14px; font-family: 'DM Sans', sans-serif; cursor: pointer; margin-top: 6px; transition: background 0.15s; }
+  .btn-renew:hover { background: rgba(106,191,123,0.08); }
+
+  .detail-title { font-family: 'Playfair Display', serif; font-size: 22px; font-weight: 400; margin-bottom: 6px; }
+  .detail-badge-row { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+  .detail-section { margin-bottom: 16px; }
+  .detail-section-label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 6px; font-weight: 500; }
+  .detail-section-value { font-size: 14px; color: var(--text-muted); background: var(--surface2); border-radius: var(--radius-sm); padding: 10px 12px; line-height: 1.5; }
+  .detail-file { display: flex; align-items: center; gap: 8px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 6px; cursor: pointer; transition: border-color 0.15s; }
+  .detail-file:hover { border-color: var(--accent); }
+  .detail-file span { font-size: 13px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .detail-file .file-icon { font-size: 18px; flex-shrink: 0; }
+
+  .settings-section { margin-bottom: 28px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+  .settings-section:last-of-type { border-bottom: none; }
+  .settings-section h3 { font-family: 'Playfair Display', serif; font-size: 17px; font-weight: 400; margin-bottom: 16px; color: var(--text); }
+  .threshold-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .threshold-label { font-size: 13px; color: var(--text-muted); flex: 1; }
+  .threshold-row input[type=number] { width: 64px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 15px; padding: 8px 10px; outline: none; text-align: center; -webkit-appearance: none; transition: border-color 0.15s; }
+  .threshold-row input[type=number]:focus { border-color: var(--accent); }
+  .threshold-row .unit { font-size: 13px; color: var(--text-dim); white-space: nowrap; }
+  .colordot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: middle; }
+  .cat-manage-list { margin-bottom: 12px; }
+  .cat-manage-item { display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 6px; font-size: 14px; color: var(--text-muted); }
+  .cat-manage-remove { color: var(--text-dim); cursor: pointer; font-size: 18px; line-height: 1; }
+  .cat-manage-remove:hover { color: var(--red); }
+  .cat-add-row { display: flex; gap: 8px; }
+  .cat-add-row input { flex: 1; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 15px; padding: 10px 12px; outline: none; transition: border-color 0.15s; }
+  .cat-add-row input:focus { border-color: var(--accent); }
+  .cat-add-row button { background: var(--accent); color: #0f0f0f; border: none; border-radius: var(--radius-sm); padding: 10px 18px; font-size: 14px; font-weight: 500; font-family: 'DM Sans', sans-serif; cursor: pointer; }
+  .email-status { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 13px; color: var(--text-muted); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); }
+  .status-dot.configured { background: var(--green); }
+  .info-box { background: var(--accent-dim2); border: 1px solid rgba(201,168,76,0.2); border-radius: var(--radius-sm); padding: 13px 14px; font-size: 12px; color: var(--text-muted); line-height: 1.75; margin-bottom: 16px; }
+  .info-box strong { color: var(--accent); }
+  .info-box a { color: var(--accent); text-decoration: none; }
+  .info-box code { background: var(--surface); padding: 1px 6px; border-radius: 3px; font-size: 11px; color: var(--text); }
+  .btn-test { background: none; border: 1px solid var(--border); color: var(--text-muted); border-radius: var(--radius-sm); padding: 10px; font-size: 13px; font-family: 'DM Sans', sans-serif; cursor: pointer; transition: border-color 0.15s; width: 100%; margin-top: 6px; }
+  .btn-test:hover { border-color: var(--accent); color: var(--accent); }
+
+  .bottom-nav { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--border); display: flex; padding: 10px 0 24px; }
+  .nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; color: var(--text-dim); font-size: 11px; transition: color 0.15s; border: none; background: none; font-family: 'DM Sans', sans-serif; }
+  .nav-item.active { color: var(--accent); }
+  .nav-item .nav-icon { font-size: 20px; }
+
+  .toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 10px 20px; border-radius: 20px; font-size: 13px; z-index: 999; opacity: 0; transition: opacity 0.2s; pointer-events: none; white-space: nowrap; }
+  .toast.show { opacity: 1; }
+  .confirm-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 600; backdrop-filter: blur(4px); align-items: center; justify-content: center; padding: 24px; }
+  .confirm-overlay.open { display: flex; animation: fadeIn 0.15s; }
+  .confirm-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px 20px 20px; width: 100%; max-width: 340px; }
+  .confirm-title { font-family: 'Playfair Display', serif; font-size: 17px; margin-bottom: 10px; color: var(--text); }
+  .confirm-msg { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 20px; white-space: pre-line; }
+  .confirm-btns { display: flex; gap: 10px; }
+  .confirm-btns button { flex: 1; padding: 12px; border-radius: var(--radius-sm); font-size: 14px; font-family: 'DM Sans', sans-serif; cursor: pointer; }
+  .confirm-cancel { background: var(--surface2); color: var(--text-muted); border: 1px solid var(--border); }
+  .confirm-ok { background: var(--red); color: #fff; font-weight: 500; border: none; }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* LOGIN SCREEN */
+  .login-screen { position: fixed; inset: 0; background: var(--bg); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .login-screen.hidden { display: none; }
+  .login-box { width: 100%; max-width: 380px; }
+  .login-logo { font-family: 'Playfair Display', serif; font-size: 26px; color: var(--accent); text-align: center; margin-bottom: 6px; }
+  .login-sub { font-size: 13px; color: var(--text-muted); text-align: center; margin-bottom: 30px; line-height: 1.5; }
+  .login-error { font-size: 13px; color: var(--red); min-height: 18px; margin-bottom: 4px; }
+  .login-toggle { text-align: center; font-size: 13px; color: var(--text-muted); margin-top: 16px; }
+  .login-toggle a { color: var(--accent); text-decoration: none; }
+  .login-spinner { text-align: center; color: var(--text-dim); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN SCREEN -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-box">
+    <div class="login-logo">W jednym miejscu</div>
+    <div class="login-sub">Zaloguj się, aby Twoje terminy i pliki<br>synchronizowały się między urządzeniami</div>
+    <div class="field"><label>E-mail</label><input type="email" id="authEmail" autocomplete="email"></div>
+    <div class="field"><label>Hasło</label><input type="password" id="authPassword" autocomplete="current-password"></div>
+    <div class="login-error" id="authError"></div>
+    <button class="btn-primary" id="authSubmitBtn" onclick="handleAuthSubmit()" style="width:100%">Zaloguj się</button>
+    <div class="login-toggle">
+      <span id="authToggleText">Nie masz konta?</span> <a href="#" onclick="toggleAuthMode(event)" id="authToggleLink">Zarejestruj się</a>
+    </div>
+  </div>
+</div>
+
+<div class="app">
+  <header>
+    <div class="header-top">
+      <div class="logo">W jednym miejscu <span>twoje ważne daty</span></div>
+      <div class="header-btns">
+        <button class="btn-icon" onclick="openSettings()">⚙️</button>
+        <button class="btn-add" onclick="openForm()">+</button>
+      </div>
+    </div>
+    <div class="filters" id="filters"></div>
+  </header>
+  <main id="main"></main>
+  <div class="bottom-nav">
+    <button class="nav-item active" onclick="setView('list',this)"><span class="nav-icon">📋</span>Lista</button>
+    <button class="nav-item" onclick="setView('soon',this)"><span class="nav-icon">⏰</span>Zbliżające się</button>
+    <button class="nav-item" onclick="setView('archive',this)"><span class="nav-icon">📁</span>Archiwum</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- CONFIRM DIALOG -->
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-box">
+    <div class="confirm-title" id="confirmTitle"></div>
+    <div class="confirm-msg" id="confirmMsg"></div>
+    <div class="confirm-btns">
+      <button class="confirm-cancel" id="confirmCancel">Anuluj</button>
+      <button class="confirm-ok" id="confirmOk">Usuń</button>
+    </div>
+  </div>
+</div>
+
+<!-- FORM -->
+<div class="overlay" id="formOverlay">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <h2 id="formTitle">Nowy wpis</h2>
+    <div class="field"><label>Nazwa *</label><input type="text" id="fName" placeholder="np. Urodziny Mamy"></div>
+    <div class="field"><label>Data terminu *</label><input type="date" id="fDate"></div>
+    <div class="field">
+      <label>Kategoria</label>
+      <div class="cat-row">
+        <select id="fCat"></select>
+        <button class="btn-cat-manage" onclick="closeForm(); openSettings('cats')">+ Zarządzaj</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>Powtarzanie</label>
+      <div class="recur-grid">
+        <select id="fRecurFreq" onchange="onRecurChange()">
+          <option value="none">Nie powtarza się</option>
+          <option value="weekly">Co tydzień</option>
+          <option value="monthly">Co miesiąc</option>
+          <option value="yearly">Co rok</option>
+        </select>
+      </div>
+      <div class="recur-end-block" id="recurEndBlock">
+        <div class="toggle-row" onclick="toggleRecurEnd()">
+          <input type="checkbox" id="fRecurHasEnd">
+          <span>Ustaw datę końcową</span>
+        </div>
+        <div class="recur-count-row" id="recurCountRow" style="display:none">
+          <span>Powtórz</span>
+          <input type="number" id="fRecurCount" min="1" max="999" value="12">
+          <span id="recurCountUnit">razy</span>
+        </div>
+      </div>
+    </div>
+    <div class="field"><label>Notatki</label><textarea id="fNotes" placeholder="Adres, numer telefonu, kwota, uwagi…"></textarea></div>
+    <div class="field">
+      <label>Pliki (PDF, zdjęcia)</label>
+      <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+        <div class="upload-icon">📎</div>
+        <p>Kliknij, aby dodać pliki</p>
+      </div>
+      <input type="file" id="fileInput" multiple accept=".pdf,.jpg,.jpeg,.png" onchange="handleFiles(event)">
+      <div class="file-list" id="fileList"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="closeForm()">Anuluj</button>
+      <button class="btn-primary" id="saveEntryBtn" onclick="saveEntry()">Zapisz</button>
+    </div>
+  </div>
+</div>
+
+<!-- DETAIL -->
+<div class="overlay" id="detailOverlay">
+  <div class="sheet"><div class="sheet-handle"></div><div id="detailContent"></div></div>
+</div>
+
+<!-- SETTINGS -->
+<div class="overlay" id="settingsOverlay">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <h2>Ustawienia</h2>
+
+    <div class="settings-section" id="sectionAccount">
+      <h3>👤 Konto</h3>
+      <div class="email-status">
+        <div class="status-dot configured"></div>
+        <span id="accountEmailText">—</span>
+      </div>
+      <button class="btn-secondary" onclick="handleLogout()" style="width:100%">Wyloguj się</button>
+    </div>
+
+    <div class="settings-section" id="sectionThresholds">
+      <h3>⚠️ Progi pilności</h3>
+      <div class="threshold-row">
+        <span class="threshold-label"><span class="colordot" style="background:var(--red)"></span>Pilne (czerwone)</span>
+        <input type="number" id="tUrgent" min="1" max="365">
+        <span class="unit">dni lub mniej</span>
+      </div>
+      <div class="threshold-row">
+        <span class="threshold-label"><span class="colordot" style="background:var(--orange)"></span>Nadchodzące (pomarańczowe)</span>
+        <input type="number" id="tSoon" min="1" max="365">
+        <span class="unit">dni lub mniej</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:2px;padding-left:16px">
+        <span class="colordot" style="background:var(--green)"></span>Powyżej <span id="greenLabel">30</span> dni → zielone
+      </div>
+    </div>
+
+    <div class="settings-section" id="sectionCats">
+      <h3>🏷️ Kategorie</h3>
+      <div class="cat-manage-list" id="catManageList"></div>
+      <div class="cat-add-row">
+        <input type="text" id="newCatInput" placeholder="Nowa kategoria…" onkeydown="if(event.key==='Enter')addCategory()">
+        <button onclick="addCategory()">Dodaj</button>
+      </div>
+    </div>
+
+    <div class="settings-section" id="sectionEmail">
+      <h3>✉️ Powiadomienia e-mail</h3>
+      <div class="info-box">
+        <strong>Konfiguracja EmailJS (darmowe, 200 e-maili/mies.)</strong><br>
+        1. Wejdź na <a href="https://www.emailjs.com" target="_blank">emailjs.com</a> → załóż konto<br>
+        2. Dodaj usługę e-mail (Gmail) → skopiuj <strong>Service ID</strong><br>
+        3. Utwórz szablon → skopiuj <strong>Template ID</strong><br>
+        4. W zakładce Account skopiuj <strong>Public Key</strong><br>
+        5. W szablonie użyj: <code>{{entry_name}}</code> <code>{{entry_date}}</code> <code>{{days_left}}</code>
+      </div>
+      <div class="email-status">
+        <div class="status-dot" id="emailDot"></div>
+        <span id="emailStatusText">Nie skonfigurowano</span>
+      </div>
+      <div class="field"><label>Twój adres e-mail</label><input type="email" id="sEmail" placeholder="twoj@email.com"></div>
+      <div class="field"><label>Public Key</label><input type="text" id="sPublicKey" placeholder="np. abc123XYZ..."></div>
+      <div class="field"><label>Service ID</label><input type="text" id="sServiceId" placeholder="np. service_xxxxxxx"></div>
+      <div class="field"><label>Template ID</label><input type="text" id="sTemplateId" placeholder="np. template_xxxxxxx"></div>
+      <button class="btn-test" onclick="sendTestEmail()">📨 Wyślij testowy e-mail</button>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="closeSettings()">Anuluj</button>
+      <button class="btn-primary" onclick="saveSettings()">Zapisz ustawienia</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── STATE ─────────────────────────────────────────────────────────────────────
+let entries = [];
+let cfg = {
+  urgentDays: 7, soonDays: 30,
+  categories: ['Ubezpieczenia','Zdrowie','Dom','Finanse','Inne'],
+  email:'', publicKey:'', serviceId:'', templateId:''
+};
+let pendingFiles = [], editingId = null, currentFilter = 'all', currentView = 'list';
+let currentUid = null, currentUserEmail = '';
+let unsubEntries = null, unsubSettings = null;
+let dataLoaded = false;
+let authMode = 'login';
+
+// ── RECURRENCE HELPERS ────────────────────────────────────────────────────────
+function nextOccurrence(baseDateStr, recur) {
+  if (!recur || recur.freq === 'none') return baseDateStr;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const base  = new Date(baseDateStr); base.setHours(0,0,0,0);
+  if (base >= today) return baseDateStr;
+  let candidate = new Date(base);
+  let iterations = 0;
+  const maxIter = 10000;
+  while (candidate < today && iterations < maxIter) {
+    iterations++;
+    if (recur.freq === 'weekly')  candidate.setDate(candidate.getDate() + 7);
+    if (recur.freq === 'monthly') candidate.setMonth(candidate.getMonth() + 1);
+    if (recur.freq === 'yearly')  candidate.setFullYear(candidate.getFullYear() + 1);
+    if (recur.hasEnd && recur.endCount) { if (iterations > recur.endCount) return null; }
+  }
+  if (candidate < today) return null;
+  return candidate.toISOString().split('T')[0];
+}
+function recurLabel(recur) {
+  if (!recur || recur.freq === 'none') return null;
+  const map = { weekly:'Co tydzień', monthly:'Co miesiąc', yearly:'Co rok' };
+  let label = map[recur.freq] || '';
+  if (recur.hasEnd && recur.endCount) label += ` · ${recur.endCount}×`;
+  return label;
+}
+function freqUnit(freq) {
+  if (freq === 'weekly')  return 'tygodnie';
+  if (freq === 'monthly') return 'miesiące';
+  if (freq === 'yearly')  return 'lata';
+  return 'razy';
+}
+
+// ── URGENCY ───────────────────────────────────────────────────────────────────
+function urgency(dateStr) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const d = new Date(dateStr); d.setHours(0,0,0,0);
+  const diff = Math.round((d - today) / 86400000);
+  if (diff < 0)               return {level:'expired', label:'Minął',  diff};
+  if (diff <= cfg.urgentDays) return {level:'urgent',  label: diff===0?'Dziś!':`Za ${diff} dni`, diff};
+  if (diff <= cfg.soonDays)   return {level:'soon',    label:`Za ${diff} dni`, diff};
+  return                             {level:'ok',      label:`Za ${diff} dni`, diff};
+}
+function effectiveDate(e) {
+  if (!e.recur || e.recur.freq === 'none') return e.date;
+  const next = nextOccurrence(e.date, e.recur);
+  return next || e.date;
+}
+function fmtDate(s) {
+  return s ? new Date(s).toLocaleDateString('pl-PL',{day:'numeric',month:'long',year:'numeric'}) : '';
+}
+
+// ── TOAST ─────────────────────────────────────────────────────────────────────
+function toast(msg, ms=2600) {
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.classList.add('show');
+  setTimeout(()=>el.classList.remove('show'), ms);
+}
+
+// ── CONFIRM DIALOG ────────────────────────────────────────────────────────────
+function showConfirm(title, msg, okLabel, onOk) {
+  document.getElementById('confirmTitle').textContent = title;
+  document.getElementById('confirmMsg').textContent   = msg;
+  document.getElementById('confirmOk').textContent    = okLabel;
+  const overlay = document.getElementById('confirmOverlay');
+  overlay.classList.add('open');
+  document.getElementById('confirmOk').onclick     = () => { overlay.classList.remove('open'); onOk(); };
+  document.getElementById('confirmCancel').onclick = () => overlay.classList.remove('open');
+}
+
+// ── AUTH UI ───────────────────────────────────────────────────────────────────
+function toggleAuthMode(e) {
+  e.preventDefault();
+  authMode = authMode === 'login' ? 'register' : 'login';
+  document.getElementById('authSubmitBtn').textContent = authMode==='login' ? 'Zaloguj się' : 'Zarejestruj się';
+  document.getElementById('authToggleText').textContent = authMode==='login' ? 'Nie masz konta?' : 'Masz już konto?';
+  document.getElementById('authToggleLink').textContent = authMode==='login' ? 'Zarejestruj się' : 'Zaloguj się';
+  document.getElementById('authError').textContent = '';
+}
+function authErrorMessage(code) {
+  const map = {
+    'auth/invalid-email':'Nieprawidłowy adres e-mail.',
+    'auth/user-not-found':'Nie znaleziono konta z tym adresem e-mail.',
+    'auth/wrong-password':'Nieprawidłowe hasło.',
+    'auth/invalid-credential':'Nieprawidłowy e-mail lub hasło.',
+    'auth/email-already-in-use':'Konto z tym adresem e-mail już istnieje.',
+    'auth/weak-password':'Hasło musi mieć co najmniej 6 znaków.',
+    'auth/too-many-requests':'Za dużo nieudanych prób. Spróbuj ponownie później.',
+    'auth/network-request-failed':'Brak połączenia z internetem.'
+  };
+  return map[code] || 'Coś poszło nie tak. Spróbuj ponownie.';
+}
+async function handleAuthSubmit() {
+  const email = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPassword').value;
+  const errEl = document.getElementById('authError');
+  errEl.textContent = '';
+  if (!email || !password) { errEl.textContent = 'Wpisz e-mail i hasło.'; return; }
+  const btn = document.getElementById('authSubmitBtn');
+  btn.disabled = true; btn.style.opacity = '0.6';
+  try {
+    if (authMode === 'login') await window.fb.login(email, password);
+    else await window.fb.register(email, password);
+  } catch (err) {
+    errEl.textContent = authErrorMessage(err.code);
+  } finally {
+    btn.disabled = false; btn.style.opacity = '1';
+  }
+}
+function handleLogout() {
+  showConfirm('Wylogować się?', 'Będziesz musiał zalogować się ponownie, aby zobaczyć swoje terminy.', 'Wyloguj', async () => {
+    closeSettings();
+    await window.fb.logout();
+  });
+}
+
+// ── DATA SUBSCRIPTION (FIRESTORE) ────────────────────────────────────────────
+function subscribeData(uid, email) {
+  currentUserEmail = email;
+  document.getElementById('accountEmailText').textContent = email;
+
+  unsubSettings = window.fb.subscribeSettings(uid, (settings) => {
+    if (settings) {
+      cfg = { ...cfg, ...settings };
+    } else {
+      window.fb.saveSettings(uid, cfg);
+    }
+    renderFilters();
+    renderCatManage();
+    updateEmailDot();
+    render();
+    initEmailJS();
+  });
+
+  unsubEntries = window.fb.subscribeEntries(uid, (list) => {
+    entries = list;
+    dataLoaded = true;
+    render();
+    checkDailyReminders();
+  });
+}
+
+function teardownData() {
+  if (unsubEntries) { unsubEntries(); unsubEntries = null; }
+  if (unsubSettings) { unsubSettings(); unsubSettings = null; }
+  entries = [];
+  dataLoaded = false;
+}
+
+// ── FILTERS ───────────────────────────────────────────────────────────────────
+function renderFilters() {
+  document.getElementById('filters').innerHTML =
+    ['all',...cfg.categories].map(c => {
+      const lbl = c==='all'?'Wszystkie':c;
+      const act = currentFilter===c?'active':'';
+      return `<button class="filter-btn ${act}" onclick="setFilter('${c}',this)">${lbl}</button>`;
+    }).join('');
+}
+
+// ── RENDER ────────────────────────────────────────────────────────────────────
+function render() {
+  if (!dataLoaded) {
+    document.getElementById('main').innerHTML = `<div class="empty"><div class="empty-icon">☁️</div><div class="empty-text">Wczytywanie danych…</div></div>`;
+    return;
+  }
+
+  let list = entries.map(e => ({ ...e, _eff: effectiveDate(e) }));
+  list = list.map(e => {
+    if (e.recur && e.recur.freq !== 'none' && e._eff === null) return { ...e, _eff: e.date, _exhausted: true };
+    return e;
+  });
+
+  if (currentFilter !== 'all') list = list.filter(e => e.cat === currentFilter);
+
+  if (currentView === 'soon') {
+    list = list.filter(e => !e._exhausted && ['urgent','soon'].includes(urgency(e._eff).level));
+  } else if (currentView === 'archive') {
+    list = list.filter(e => e._exhausted || urgency(e._eff).level === 'expired');
+  } else {
+    list = list.filter(e => !e._exhausted && urgency(e._eff).level !== 'expired');
+  }
+
+  list.sort((a,b) => new Date(a._eff) - new Date(b._eff));
+
+  const main = document.getElementById('main');
+  if (!list.length) {
+    main.innerHTML = `<div class="empty"><div class="empty-icon">${currentView==='archive'?'📁':'📅'}</div><div class="empty-text">${currentView==='archive'?'Brak archiwalnych wpisów':'Brak wpisów.<br>Naciśnij <strong>+</strong>, żeby dodać pierwszy termin.'}</div></div>`;
+    return;
+  }
+
+  const urgent = list.filter(e => urgency(e._eff).level === 'urgent');
+  const rest   = list.filter(e => urgency(e._eff).level !== 'urgent');
+  let html = '';
+  if (urgent.length && currentView !== 'archive') {
+    html += `<div class="section-label">⚠ Pilne</div>`;
+    urgent.forEach(e => html += cardHTML(e));
+  }
+  if (rest.length) {
+    const lbl = currentView==='archive'?'Przeszłe terminy':(urgent.length?'Nadchodzące':'Terminy');
+    html += `<div class="section-label">${lbl}</div>`;
+    rest.forEach(e => html += cardHTML(e));
+  }
+  main.innerHTML = html;
+}
+
+function cardHTML(e) {
+  const eff = e._eff || e.date;
+  const u = urgency(eff);
+  const lv = u.level === 'expired' ? 'ok' : u.level;
+  const rl = recurLabel(e.recur);
+  return `<div class="card ${lv}" onclick="openDetail('${e.id}')">
+    <div class="card-header"><div class="card-title">${e.name}</div><span class="badge ${lv}">${u.label}</span></div>
+    <div class="card-meta">
+      <span class="card-date">${fmtDate(eff)}</span>
+      <span class="card-cat">${e.cat}</span>
+      ${rl ? `<span class="card-recur">🔁 ${rl}</span>` : ''}
+      <span class="card-icons">${e.files&&e.files.length?'<span class="icon-dot">📎</span>':''}${e.notes&&e.notes.trim()?'<span class="icon-dot">📝</span>':''}</span>
+    </div>
+  </div>`;
+}
+
+function setFilter(cat,btn) { currentFilter=cat; document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); render(); }
+function setView(v,btn)     { currentView=v;   document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); render(); }
+
+// ── RECURRENCE FORM UI ────────────────────────────────────────────────────────
+function onRecurChange() {
+  const freq = document.getElementById('fRecurFreq').value;
+  document.getElementById('recurEndBlock').classList.toggle('visible', freq !== 'none');
+  document.getElementById('recurCountUnit').textContent = freqUnit(freq);
+}
+function toggleRecurEnd() {
+  const cb = document.getElementById('fRecurHasEnd');
+  cb.checked = !cb.checked;
+  document.getElementById('recurCountRow').style.display = cb.checked ? 'flex' : 'none';
+}
+
+// ── FORM ──────────────────────────────────────────────────────────────────────
+function populateCatSelect(selected) {
+  document.getElementById('fCat').innerHTML = cfg.categories.map(c =>
+    `<option value="${c}" ${c===selected?'selected':''}>${c}</option>`).join('');
+}
+
+function openForm(id=null) {
+  editingId=id; pendingFiles=[];
+  document.getElementById('fileList').innerHTML='';
+  document.getElementById('formTitle').textContent = id ? 'Edytuj wpis' : 'Nowy wpis';
+
+  document.getElementById('fRecurFreq').value = 'none';
+  document.getElementById('recurEndBlock').classList.remove('visible');
+  document.getElementById('fRecurHasEnd').checked = false;
+  document.getElementById('recurCountRow').style.display = 'none';
+  document.getElementById('fRecurCount').value = 12;
+
+  if (id) {
+    const e = entries.find(x => x.id===id);
+    document.getElementById('fName').value  = e.name;
+    document.getElementById('fDate').value  = e.date;
+    document.getElementById('fNotes').value = e.notes||'';
+    populateCatSelect(e.cat);
+    pendingFiles = e.files ? e.files.map(f => ({ ...f, existing: true })) : [];
+    renderFileList();
+    if (e.recur && e.recur.freq !== 'none') {
+      document.getElementById('fRecurFreq').value = e.recur.freq;
+      document.getElementById('recurEndBlock').classList.add('visible');
+      document.getElementById('recurCountUnit').textContent = freqUnit(e.recur.freq);
+      if (e.recur.hasEnd && e.recur.endCount) {
+        document.getElementById('fRecurHasEnd').checked = true;
+        document.getElementById('recurCountRow').style.display = 'flex';
+        document.getElementById('fRecurCount').value = e.recur.endCount;
+      }
+    }
+  } else {
+    document.getElementById('fName').value  = '';
+    document.getElementById('fDate').value  = '';
+    document.getElementById('fNotes').value = '';
+    populateCatSelect('');
+  }
+  document.getElementById('formOverlay').classList.add('open');
+}
+function closeForm() { document.getElementById('formOverlay').classList.remove('open'); editingId=null; pendingFiles=[]; }
+
+function handleFiles(e) {
+  Array.from(e.target.files).forEach(file => {
+    pendingFiles.push({ file, name: file.name, type: file.type, existing: false });
+  });
+  renderFileList();
+  e.target.value = '';
+}
+function renderFileList() {
+  document.getElementById('fileList').innerHTML = pendingFiles.map((f,i) =>
+    `<div class="file-item"><span>📄 ${f.name}</span><span class="file-remove" onclick="removeFile(${i})">×</span></div>`).join('');
+}
+function removeFile(i) {
+  const f = pendingFiles[i];
+  if (f.existing && f.path) window.fb.deleteFile(f.path);
+  pendingFiles.splice(i,1);
+  renderFileList();
+}
+
+async function saveEntry() {
+  const name = document.getElementById('fName').value.trim();
+  const date = document.getElementById('fDate').value;
+  if (!name||!date) { toast('Nazwa i data są wymagane'); return; }
+  if (!currentUid) { toast('Brak połączenia z kontem'); return; }
+
+  const btn = document.getElementById('saveEntryBtn');
+  btn.disabled = true; btn.textContent = 'Zapisywanie…';
+
+  try {
+    const freq = document.getElementById('fRecurFreq').value;
+    const hasEnd = document.getElementById('fRecurHasEnd').checked;
+    const endCount = parseInt(document.getElementById('fRecurCount').value) || 0;
+    const recur = { freq, hasEnd: freq !== 'none' && hasEnd, endCount: (freq !== 'none' && hasEnd) ? endCount : 0 };
+
+    const entryId = editingId || window.fb.newEntryId(currentUid);
+
+    const finalFiles = [];
+    for (const pf of pendingFiles) {
+      if (pf.existing) {
+        finalFiles.push({ name: pf.name, url: pf.url, type: pf.type, path: pf.path });
+      } else {
+        const { url, path } = await window.fb.uploadFile(currentUid, entryId, pf.file);
+        finalFiles.push({ name: pf.name, type: pf.type, url, path });
+      }
+    }
+
+    const entryData = {
+      name, date, recur,
+      cat: document.getElementById('fCat').value,
+      notes: document.getElementById('fNotes').value.trim(),
+      files: finalFiles,
+      createdAt: editingId ? (entries.find(x=>x.id===editingId)?.createdAt || Date.now()) : Date.now()
+    };
+
+    await window.fb.saveEntry(currentUid, entryId, entryData);
+    closeForm(); closeDetail();
+    toast(editingId ? 'Wpis zaktualizowany ✓' : 'Wpis dodany ✓');
+  } catch (err) {
+    console.error(err);
+    toast('❌ Błąd zapisu – sprawdź połączenie');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Zapisz';
+  }
+}
+
+// ── DETAIL ────────────────────────────────────────────────────────────────────
+function openDetail(id) {
+  const e = entries.find(x=>x.id===id); if (!e) return;
+  const eff = effectiveDate(e) || e.date;
+  const u  = urgency(eff);
+  const lv = u.level==='expired'?'ok':u.level;
+  const rl = recurLabel(e.recur);
+
+  const filesHTML = e.files&&e.files.length
+    ? `<div class="detail-section"><div class="detail-section-label">Pliki (${e.files.length})</div>
+       ${e.files.map((f)=>`<div class="detail-file" onclick="window.open('${f.url}','_blank')"><span class="file-icon">${f.type==='application/pdf'?'📄':'🖼️'}</span><span>${f.name}</span></div>`).join('')}</div>` : '';
+  const notesHTML = e.notes
+    ? `<div class="detail-section"><div class="detail-section-label">Notatki</div><div class="detail-section-value">${e.notes.replace(/\n/g,'<br>')}</div></div>` : '';
+  const recurHTML = rl
+    ? `<div class="detail-section"><div class="detail-section-label">Powtarzanie</div><div class="detail-section-value">🔁 ${rl}</div></div>` : '';
+
+  const emailOk = cfg.email&&cfg.publicKey&&cfg.serviceId&&cfg.templateId;
+  const isRecurring = e.recur && e.recur.freq !== 'none';
+  const isPast = urgency(eff).level === 'expired';
+  const renewBtn = isRecurring && isPast
+    ? `<button class="btn-renew" onclick="advanceRecurrence('${e.id}')">🔁 Przesuń do następnego terminu</button>` : '';
+
+  document.getElementById('detailContent').innerHTML=`
+    <div class="detail-title">${e.name}</div>
+    <div class="detail-badge-row">
+      <span class="badge ${lv}">${u.label}</span>
+      <span class="card-cat">${e.cat}</span>
+      <span class="card-date" style="font-size:13px;color:var(--text-muted)">${fmtDate(eff)}</span>
+    </div>
+    ${recurHTML}${notesHTML}${filesHTML}
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="closeDetail()">Zamknij</button>
+      <button class="btn-primary" onclick="closeDetail();openForm('${e.id}')">Edytuj</button>
+    </div>
+    ${renewBtn}
+    ${emailOk?`<button class="btn-remind" onclick="sendReminderEmail('${e.id}')">✉️ Wyślij przypomnienie e-mail</button>`:''}
+    <button class="btn-delete" onclick="deleteEntry('${e.id}')">Usuń wpis</button>`;
+  document.getElementById('detailOverlay').classList.add('open');
+}
+function closeDetail() { document.getElementById('detailOverlay').classList.remove('open'); }
+
+async function advanceRecurrence(id) {
+  const e = entries.find(x=>x.id===id); if (!e) return;
+  const next = nextOccurrence(e.date, e.recur);
+  if (!next) { toast('Brak kolejnych terminów'); return; }
+  const updated = { ...e, date: next };
+  if (updated.recur.hasEnd && updated.recur.endCount > 0) {
+    updated.recur.endCount = Math.max(0, updated.recur.endCount - 1);
+    if (updated.recur.endCount === 0) updated.recur.hasEnd = false;
+  }
+  delete updated.id;
+  await window.fb.saveEntry(currentUid, id, updated);
+  closeDetail();
+  toast(`Przesunięto do ${fmtDate(next)}`);
+}
+
+function deleteEntry(id) {
+  showConfirm('Usunąć wpis?','Tej operacji nie można cofnąć. Załączone pliki zostaną również usunięte.','Usuń', async () => {
+    const e = entries.find(x=>x.id===id);
+    if (e && e.files) e.files.forEach(f => { if (f.path) window.fb.deleteFile(f.path); });
+    await window.fb.deleteEntry(currentUid, id);
+    closeDetail();
+    toast('Wpis usunięty');
+  });
+}
+
+// ── SETTINGS ──────────────────────────────────────────────────────────────────
+function openSettings(section=null) {
+  document.getElementById('tUrgent').value   = cfg.urgentDays;
+  document.getElementById('tSoon').value     = cfg.soonDays;
+  document.getElementById('greenLabel').textContent = cfg.soonDays;
+  document.getElementById('sEmail').value      = cfg.email||'';
+  document.getElementById('sPublicKey').value  = cfg.publicKey||'';
+  document.getElementById('sServiceId').value  = cfg.serviceId||'';
+  document.getElementById('sTemplateId').value = cfg.templateId||'';
+  document.getElementById('accountEmailText').textContent = currentUserEmail || '—';
+  updateEmailDot(); renderCatManage();
+  document.getElementById('tSoon').oninput = () => {
+    document.getElementById('greenLabel').textContent = document.getElementById('tSoon').value;
+  };
+  document.getElementById('settingsOverlay').classList.add('open');
+  if (section) setTimeout(()=>{
+    const el=document.getElementById('section'+section[0].toUpperCase()+section.slice(1));
+    if (el) el.scrollIntoView({behavior:'smooth'});
+  }, 250);
+}
+function closeSettings() { document.getElementById('settingsOverlay').classList.remove('open'); }
+
+async function saveSettings() {
+  const u=parseInt(document.getElementById('tUrgent').value)||7;
+  const s=parseInt(document.getElementById('tSoon').value)||30;
+  cfg.urgentDays = u;
+  cfg.soonDays   = Math.max(s, u+1);
+  cfg.email       = document.getElementById('sEmail').value.trim();
+  cfg.publicKey   = document.getElementById('sPublicKey').value.trim();
+  cfg.serviceId   = document.getElementById('sServiceId').value.trim();
+  cfg.templateId  = document.getElementById('sTemplateId').value.trim();
+  await window.fb.saveSettings(currentUid, cfg);
+  closeSettings(); initEmailJS();
+  toast('Ustawienia zapisane ✓');
+}
+
+function updateEmailDot() {
+  const ok = cfg.email&&cfg.publicKey&&cfg.serviceId&&cfg.templateId;
+  const dot = document.getElementById('emailDot');
+  const txt = document.getElementById('emailStatusText');
+  if (!dot || !txt) return;
+  dot.className='status-dot'+(ok?' configured':'');
+  txt.textContent = ok?`Skonfigurowano (${cfg.email})`:'Nie skonfigurowano';
+}
+
+// ── CATEGORIES ────────────────────────────────────────────────────────────────
+function renderCatManage() {
+  const list = document.getElementById('catManageList');
+  if (!list) return;
+  list.innerHTML = '';
+  cfg.categories.forEach(c => {
+    const row = document.createElement('div');
+    row.className = 'cat-manage-item';
+    const label = document.createElement('span');
+    label.textContent = c;
+    const btn = document.createElement('span');
+    btn.className = 'cat-manage-remove';
+    btn.title = 'Usuń kategorię';
+    btn.textContent = '×';
+    btn.addEventListener('click', () => removeCategory(c));
+    row.appendChild(label);
+    row.appendChild(btn);
+    list.appendChild(row);
+  });
+}
+async function addCategory() {
+  const input=document.getElementById('newCatInput');
+  const name=input.value.trim();
+  if (!name) return;
+  if (cfg.categories.includes(name)) { toast('Kategoria już istnieje'); return; }
+  cfg.categories.push(name);
+  input.value='';
+  renderCatManage();
+  await window.fb.saveSettings(currentUid, cfg);
+  toast(`Dodano „${name}"`);
+}
+function removeCategory(name) {
+  const affected = entries.filter(e => e.cat === name);
+  const doRemove = async () => {
+    if (affected.length > 0) {
+      for (const e of affected) {
+        const updated = { ...e, cat: 'Inne' };
+        delete updated.id;
+        await window.fb.saveEntry(currentUid, e.id, updated);
+      }
+    }
+    cfg.categories = cfg.categories.filter(c => c !== name);
+    await window.fb.saveSettings(currentUid, cfg);
+    renderCatManage();
+    toast(affected.length > 0
+      ? `Usunięto „${name}" – ${affected.length} ${affected.length===1?'wpis przeniesiony':'wpisów przeniesionych'} do „Inne"`
+      : `Usunięto „${name}"`);
+  };
+  if (affected.length > 0) {
+    showConfirm(
+      `Usuń kategorię „${name}"?`,
+      `Kategoria jest przypisana do ${affected.length} ${affected.length===1?'wpisu':'wpisów'}:\n\n${affected.map(e=>`• ${e.name}`).join('\n')}\n\nWpisy zostaną przeniesione do kategorii „Inne".`,
+      'Usuń', doRemove
+    );
+  } else {
+    showConfirm(`Usuń kategorię „${name}"?`, 'Kategoria jest pusta. Czy na pewno chcesz ją usunąć?', 'Usuń', doRemove);
+  }
+}
+
+// ── EMAIL (EmailJS) ───────────────────────────────────────────────────────────
+function initEmailJS() {
+  if (typeof emailjs!=='undefined' && cfg.publicKey) emailjs.init({publicKey:cfg.publicKey});
+}
+async function doSendEmail(entry) {
+  if (!cfg.publicKey||!cfg.serviceId||!cfg.templateId||!cfg.email) return false;
+  const eff = effectiveDate(entry) || entry.date;
+  const u = urgency(eff);
+  try {
+    await emailjs.send(cfg.serviceId, cfg.templateId, {
+      to_email: cfg.email, entry_name: entry.name,
+      entry_date: fmtDate(eff),
+      days_left: u.diff>=0?`${u.diff} dni`:'termin minął',
+      entry_cat: entry.cat, entry_notes: entry.notes||'–'
+    });
+    return true;
+  } catch(err) { console.error('EmailJS:', err); return false; }
+}
+async function sendReminderEmail(id) {
+  const e=entries.find(x=>x.id===id); if (!e) return;
+  toast('Wysyłanie…');
+  toast(await doSendEmail(e) ? '✉️ E-mail wysłany!' : '❌ Błąd wysyłki');
+}
+async function sendTestEmail() {
+  const snap={...cfg};
+  cfg.email=document.getElementById('sEmail').value.trim();
+  cfg.publicKey=document.getElementById('sPublicKey').value.trim();
+  cfg.serviceId=document.getElementById('sServiceId').value.trim();
+  cfg.templateId=document.getElementById('sTemplateId').value.trim();
+  initEmailJS(); toast('Wysyłanie testu…');
+  const ok=await doSendEmail({name:'Testowe przypomnienie',date:new Date(Date.now()+7*86400000).toISOString().split('T')[0],cat:'Test',notes:'Testowa wiadomość z aplikacji W jednym miejscu.',recur:{freq:'none'}});
+  toast(ok?'✉️ Test wysłany!':'❌ Błąd – sprawdź dane EmailJS');
+  if (!ok) Object.assign(cfg,snap);
+}
+function checkDailyReminders() {
+  if (!cfg.email||!cfg.publicKey) return;
+  const today=new Date().toDateString();
+  if (localStorage.getItem('wjm_lastCheck')===today) return;
+  localStorage.setItem('wjm_lastCheck',today);
+  entries.forEach(async e=>{ const eff=effectiveDate(e)||e.date; const u=urgency(eff); if (u.level==='urgent'&&u.diff>=0) await doSendEmail(e); });
+}
+
+// ── BACKDROP CLOSE ────────────────────────────────────────────────────────────
+['formOverlay','detailOverlay','settingsOverlay'].forEach(id=>{
+  document.getElementById(id).addEventListener('click',function(ev){
+    if (ev.target===this) { closeForm(); closeDetail(); closeSettings(); }
+  });
+});
+
+// ── AUTH STATE WIRING ─────────────────────────────────────────────────────────
+function initAuthListener() {
+  window.fb.onAuthChange(user => {
+    if (user) {
+      currentUid = user.uid;
+      document.getElementById('loginScreen').classList.add('hidden');
+      document.getElementById('authEmail').value = '';
+      document.getElementById('authPassword').value = '';
+      document.getElementById('authError').textContent = '';
+      subscribeData(user.uid, user.email);
+    } else {
+      currentUid = null;
+      teardownData();
+      document.getElementById('loginScreen').classList.remove('hidden');
+    }
+  });
+}
+
+if (window.fb) { initAuthListener(); }
+else { window.addEventListener('fb-ready', initAuthListener, { once: true }); }
+</script>
+</body>
+</html>
